@@ -1,5 +1,7 @@
 module Lib
-    ( eval4
+    ( eval6
+    , eval5
+    , eval4
     , eval3
     , eval2
     , eval1
@@ -18,6 +20,7 @@ import Control.Monad.Identity
 import Control.Monad.Error
 import Control.Monad.Reader
 import Control.Monad.Writer
+import Control.Monad.State
 
 type Name = String
 data Expr = Lit Integer
@@ -119,3 +122,75 @@ eval4 (App a b) = do f <- eval4 a
                      case f of
                        FunV env' x' b' -> local (const $ M.insert x' x env') $ eval4 b'
                        _ -> throwError $ "App : expected a Fun application, but had " ++ show (f)
+
+-- 5 : Now we have a state that is the number of time eval5 gets ticked.
+type Eval5 m a = ReaderT Env (ErrorT String (StateT Int m)) a
+
+tick :: (Num s, MonadState s m) => m ()
+tick = get >>= (\x -> put $ x + 1)
+
+eval5 :: (Monad m) => Expr -> Eval5 m Value
+
+eval5 (Lit i) = do tick
+                   return $ IntV i
+
+eval5 (Var x) = do tick
+                   env <- ask
+                   case (M.lookup x env) of
+                     Just v -> return v
+                     _ -> throwError $ show (x) ++ " was not defined!"
+
+eval5 (Plus a b) = do tick
+                      a' <- eval5 a
+                      b' <- eval5 b
+                      case (a', b') of
+                        (IntV x, IntV y) -> return (IntV $ x + y)
+                        _ -> throwError $ "Plus : type error! a= " ++ show (a', b')
+
+eval5 (Abs x b) = do tick
+                     env <- ask
+                     return $ FunV env x b
+
+eval5 (App a b) = do tick
+                     f <- eval5 a
+                     v <- eval5 b
+                     case f of
+                       (FunV fe x b) -> local (const (M.insert x v fe)) (eval5 b)
+                       _ -> throwError $ "App : expected a Fun application, but had " ++ show (f)
+
+-- 6 : with Writer Monad, to log things
+type Eval6 m a = ReaderT Env (ErrorT String (WriterT [String] (StateT Int m))) a
+
+eval6 :: (Monad m) => Expr -> Eval6 m Value
+
+eval6 p@(Lit i) = do tick
+                     tell [show p]
+                     return $ IntV i
+
+eval6 p@(Var x) = do tick
+                     env <- ask
+                     case (M.lookup x env) of
+                       Just v -> do tell $ [ show p ++ " => " ++ show (v)]
+                                    return v
+                       _ -> throwError $ show (x) ++ " was not defined!"
+
+eval6 p@(Plus a b) = do tick
+                        a' <- eval6 a
+                        b' <- eval6 b
+                        tell [show p]
+                        case (a', b') of
+                          (IntV x, IntV y) -> return (IntV $ x + y)
+                          _ -> throwError $ "Plus : type error! a= " ++ show (a', b')
+
+eval6 p@(Abs x b) = do tick
+                       env <- ask
+                       tell [show p]
+                       return $ FunV env x b
+
+eval6 p@(App a b) = do tick
+                       f <- eval6 a
+                       v <- eval6 b
+                       tell [show p]
+                       case f of
+                         (FunV fe x b) -> local (const (M.insert x v fe)) (eval6 b)
+                         _ -> throwError $ "App : expected a Fun application, but had " ++ show (f)
